@@ -5,7 +5,6 @@ from datetime import datetime
 
 import pandas as pd
 from wcwidth import wcswidth
-from tabulate import tabulate
 
 from data_loader import load_a_stock_spot, disable_proxy
 from filters import apply_filters
@@ -13,40 +12,64 @@ from config import OUTPUT_FILE
 from strategy import scan_main_rising_stocks
 from concept_analyzer import analyze_concept_resonance
 
-# pip install -r requirements.txt
 
 # =========================
 # 运行开关
 # =========================
 
-# 是否执行第二步：主升信号扫描
+# 是否执行第二步：信号扫描
 RUN_SIGNAL_SCAN = True
 
 # 是否执行第三步：题材共振分析
+# 现在东财接口不稳定时，建议先保持 False
 RUN_CONCEPT_ANALYSIS = False
 
 
+# =========================
+# 策略说明
+# =========================
+
 def print_strategy_descriptions():
     """
-    打印主升信号策略说明。
+    打印当前策略说明。
     """
 
-    print("\n当前主升信号策略说明：")
-    print("=" * 60)
+    print("\n当前策略说明：")
+    print("=" * 80)
 
-    print("策略1：60日新高 + 放量")
+    print("一、突破 / 反转类策略")
+    print("-" * 80)
+
+    print("策略1：箱体突破")
+    print("条件：")
+    print("1. 今日收盘价 > 过去60个交易日最高价，不含今日")
+    print("2. 今日成交量 > 过去20日均量 × 1.3")
+    print("3. 过去20个交易日K线实体振幅 <= 20%，使用 open/close 取实体上下沿，避开影线误判")
+    print()
+
+    print("策略2：底部放量反转")
+    print("条件：")
+    print("1. 当前价格距40个交易日最低点 < 20%")
+    print("2. 今日涨幅 > 5%")
+    print("3. 今日成交量 > 过去20日均量 × 2")
+    print()
+
+    print("二、主升类策略")
+    print("-" * 80)
+
+    print("主升策略1：主升-箱体突破")
     print("条件：今日收盘价 > 过去60天最高收盘价，不含今日；今日成交量 > 过去20日平均成交量 × 1.5")
     print()
 
-    print("策略2：长期低位 + 突然放量大涨")
-    print("条件：当前价格距离60日最低点涨幅 < 30%；今日涨幅 > 5%；今日成交量 > 过去20日平均成交量 × 2")
+    print("主升策略2：主升-底部放量反转")
+    print("条件：当前价格距离60日最低收盘价涨幅 < 30%；今日涨幅 > 5%；今日成交量 > 过去20日平均成交量 × 2")
     print()
 
-    print("策略3：短期回调结束，重新启动")
+    print("主升策略3：主升-缩量回调启动")
     print("条件：SMA5 < SMA20；SMA60 > 5天前SMA60；今日收盘价 > SMA5；今日成交量 > 过去20日平均成交量 × 1.5")
     print()
 
-    print("策略4：均线多头排列 + 放量上涨")
+    print("主升策略4：主升-均线多头排列")
     print("条件：SMA5 > SMA10 > SMA20 > SMA60；今日涨幅 > 2%；今日成交量 > 过去20日平均成交量 × 1.2")
     print()
 
@@ -54,59 +77,19 @@ def print_strategy_descriptions():
     print("条件1：过去20个交易日日均成交额 >= 5000万元")
     print("条件2：过去15个交易日内，含今日，至少出现1次涨停；主板涨停定义为单日涨幅 >= 9.95%")
 
-    print("=" * 60)
+    print("=" * 80)
 
 
-# def print_stock_table(df: pd.DataFrame, max_rows: int = 50):
-#     """
-#     终端中以表格形式展示股票结果。
-#     """
-
-#     if df is None or df.empty:
-#         print("没有可展示的股票。")
-#         return
-
-#     show_cols = [
-#         "代码",
-#         "名称",
-#         "题材",
-#         "最新价",
-#         "涨跌幅",
-#         "行业",
-#         "命中策略",
-#         "市值_亿元",
-#         "量比",
-#         "15日涨停",
-#     ]
-
-#     show_cols = [col for col in show_cols if col in df.columns]
-
-#     show_df = df[show_cols].copy().head(max_rows)
-
-#     if "代码" in show_df.columns:
-#         show_df["代码"] = show_df["代码"].astype(str).str.zfill(6)
-
-#     # 统一转字符串，减少中文表格错位
-#     for col in show_df.columns:
-#         show_df[col] = show_df[col].astype(str)
-
-#     print(
-#         tabulate(
-#             show_df,
-#             headers="keys",
-#             tablefmt="grid",
-#             showindex=False,
-#             stralign="center",
-#             numalign="center",
-#             disable_numparse=True,
-#         )
-#     )
+# =========================
+# 终端中文对齐显示
+# =========================
 
 def align_text(text, width, align="left"):
     """
     按中文显示宽度对齐字符串。
     中文字符通常占2个宽度，英文数字占1个宽度。
     """
+
     text = "" if pd.isna(text) else str(text)
     text_width = wcswidth(text)
 
@@ -117,18 +100,19 @@ def align_text(text, width, align="left"):
 
     if align == "right":
         return " " * padding + text
-    elif align == "center":
+
+    if align == "center":
         left = padding // 2
         right = padding - left
         return " " * left + text + " " * right
-    else:
-        return text + " " * padding
+
+    return text + " " * padding
 
 
 def print_stock_table(df: pd.DataFrame, max_rows: int = 50):
     """
     终端中以纯文本方式展示股票结果。
-    重点解决中文列名、中文股票名、行业名导致的错位问题。
+    解决中文列名、中文股票名、行业名导致的错位问题。
     """
 
     if df is None or df.empty:
@@ -139,10 +123,14 @@ def print_stock_table(df: pd.DataFrame, max_rows: int = 50):
         "代码",
         "名称",
         "题材",
+        "K线日期",
+        "信号类型",
         "最新价",
         "涨跌幅",
         "行业",
-        "命中策略",
+        "突破反转策略",
+        "主升策略",
+        "命中策略数",
         "市值_亿元",
         "量比",
         "15日涨停",
@@ -162,26 +150,29 @@ def print_stock_table(df: pd.DataFrame, max_rows: int = 50):
                 lambda x: "" if pd.isna(x) else f"{x:.2f}"
             )
 
-    if "15日涨停" in show_df.columns:
-        show_df["15日涨停"] = pd.to_numeric(show_df["15日涨停"], errors="coerce").map(
-            lambda x: "" if pd.isna(x) else str(int(x))
-        )
+    for col in ["15日涨停", "命中策略数"]:
+        if col in show_df.columns:
+            show_df[col] = pd.to_numeric(show_df[col], errors="coerce").map(
+                lambda x: "" if pd.isna(x) else str(int(x))
+            )
 
-    # 每列最小宽度
     min_widths = {
         "代码": 8,
         "名称": 10,
         "题材": 20,
+        "K线日期": 12,
+        "信号类型": 14,
         "最新价": 8,
         "涨跌幅": 8,
         "行业": 12,
-        "命中策略": 24,
+        "突破反转策略": 18,
+        "主升策略": 26,
+        "命中策略数": 10,
         "市值_亿元": 10,
         "量比": 8,
         "15日涨停": 10,
     }
 
-    # 计算每列宽度
     col_widths = {}
 
     for col in show_cols:
@@ -192,10 +183,15 @@ def print_stock_table(df: pd.DataFrame, max_rows: int = 50):
 
         col_widths[col] = max(max_width, min_widths.get(col, 8))
 
-    # 数字列右对齐，文字列左对齐
-    right_align_cols = {"最新价", "涨跌幅", "市值_亿元", "量比", "15日涨停"}
+    right_align_cols = {
+        "最新价",
+        "涨跌幅",
+        "市值_亿元",
+        "量比",
+        "15日涨停",
+        "命中策略数",
+    }
 
-    # 打印表头
     header_parts = []
 
     for col in show_cols:
@@ -204,7 +200,6 @@ def print_stock_table(df: pd.DataFrame, max_rows: int = 50):
 
     print(" | ".join(header_parts))
 
-    # 打印分隔线
     sep_parts = []
 
     for col in show_cols:
@@ -212,7 +207,6 @@ def print_stock_table(df: pd.DataFrame, max_rows: int = 50):
 
     print("-+-".join(sep_parts))
 
-    # 打印内容
     for _, row in show_df.iterrows():
         row_parts = []
 
@@ -243,6 +237,10 @@ def print_concept_resonance(resonance_summary_df: pd.DataFrame):
 
     print("=" * 80)
 
+
+# =========================
+# 基础股票池
+# =========================
 
 def format_base_pool_df(selected_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -279,7 +277,6 @@ def format_base_pool_df(selected_df: pd.DataFrame) -> pd.DataFrame:
         selected_df["流通市值"] = pd.to_numeric(selected_df["流通市值"], errors="coerce") / 100000000
         selected_df = selected_df.rename(columns={"流通市值": "流通市值_亿元"})
 
-    # 所有数字列保留 2 位小数
     number_cols = selected_df.select_dtypes(include=["number"]).columns
     selected_df[number_cols] = selected_df[number_cols].round(2)
 
@@ -289,6 +286,8 @@ def format_base_pool_df(selected_df: pd.DataFrame) -> pd.DataFrame:
 def load_or_create_base_pool() -> pd.DataFrame:
     """
     加载或生成基础股票池。
+    优先读取 output/a_stock_selected.xlsx。
+    如果文件不存在，才尝试重新获取。
     """
 
     os.makedirs("output", exist_ok=True)
@@ -329,88 +328,64 @@ def load_or_create_base_pool() -> pd.DataFrame:
     return selected_df
 
 
-# def prepare_signal_export_df(signal_df: pd.DataFrame, stock_theme_map: dict) -> pd.DataFrame:
-#     """
-#     整理最终导出的主升信号股票。
-#     """
+# =========================
+# 策略拆分
+# =========================
 
-#     signal_df = signal_df.copy()
+def split_strategy_text(strategy_text: str):
+    """
+    根据命中策略文本拆分：
+    1. 突破反转策略
+    2. 主升策略
+    3. 信号类型
+    """
 
-#     signal_df["代码"] = signal_df["代码"].astype(str).str.zfill(6)
+    if pd.isna(strategy_text):
+        strategy_text = ""
 
-#     # 用策略计算时的K线数据覆盖展示字段，避免使用基础股票池里的旧行情
-#     if "收盘价" in signal_df.columns:
-#         signal_df["最新价"] = signal_df["收盘价"]
+    strategies = [
+        item.strip()
+        for item in str(strategy_text).split("、")
+        if item.strip()
+    ]
 
-#     if "今日涨跌幅" in signal_df.columns:
-#         signal_df["涨跌幅"] = signal_df["今日涨跌幅"]
+    breakthrough_strategies = []
+    main_promotion_strategies = []
 
-#     # 题材列：只显示共振题材
-#     signal_df["题材"] = signal_df["代码"].map(stock_theme_map).fillna("")
+    for item in strategies:
+        if item.startswith("主升-"):
+            main_promotion_strategies.append(item)
+        else:
+            breakthrough_strategies.append(item)
 
-#     # 命中策略数量，用于排序
-#     signal_df["命中策略数"] = signal_df["命中策略"].astype(str).apply(
-#         lambda x: len([i for i in x.split("、") if i.strip()])
-#     )
+    signal_types = []
 
-#     # 所有数字列统一保留 2 位小数
-#     number_cols = signal_df.select_dtypes(include=["number"]).columns
-#     signal_df[number_cols] = signal_df[number_cols].round(2)
+    if breakthrough_strategies:
+        signal_types.append("突破反转")
 
-#     # 按命中策略数量、15日涨停、量比排序
-#     sort_cols = []
-#     ascending = []
+    if main_promotion_strategies:
+        signal_types.append("主升")
 
-#     if "命中策略数" in signal_df.columns:
-#         sort_cols.append("命中策略数")
-#         ascending.append(False)
+    return {
+        "信号类型": "、".join(signal_types),
+        "突破反转策略": "、".join(breakthrough_strategies),
+        "主升策略": "、".join(main_promotion_strategies),
+        "突破反转策略数": len(breakthrough_strategies),
+        "主升策略数": len(main_promotion_strategies),
+        "命中策略数": len(strategies),
+    }
 
-#     if "15日涨停" in signal_df.columns:
-#         sort_cols.append("15日涨停")
-#         ascending.append(False)
-
-#     if "量比" in signal_df.columns:
-#         sort_cols.append("量比")
-#         ascending.append(False)
-
-#     if sort_cols:
-#         signal_df = signal_df.sort_values(by=sort_cols, ascending=ascending)
-
-#     export_cols = [
-#         "代码",
-#         "名称",
-#         "题材",
-#         "K线日期",
-#         "最新价",
-#         "涨跌幅",
-#         "行业",
-#         "命中策略",
-#         "总市值_亿元",
-#         "量比",
-#         "15日涨停",
-#     ]
-
-#     export_cols = [col for col in export_cols if col in signal_df.columns]
-
-#     export_signal_df = signal_df[export_cols].copy()
-
-#     export_signal_df = export_signal_df.rename(
-#         columns={"总市值_亿元": "市值_亿元"}
-#     )
-
-#     return export_signal_df
 
 def prepare_signal_export_df(signal_df: pd.DataFrame, stock_theme_map: dict) -> pd.DataFrame:
     """
-    整理最终导出的主升信号股票。
+    整理最终导出的信号股票。
     """
 
     signal_df = signal_df.copy()
 
     signal_df["代码"] = signal_df["代码"].astype(str).str.zfill(6)
 
-    # 用策略计算时的 K 线数据覆盖展示字段
-    # 避免使用基础股票池里的旧行情
+    # 用策略计算时的 K 线数据覆盖展示字段，避免使用基础股票池旧行情
     if "收盘价" in signal_df.columns:
         signal_df["最新价"] = signal_df["收盘价"]
 
@@ -420,14 +395,29 @@ def prepare_signal_export_df(signal_df: pd.DataFrame, stock_theme_map: dict) -> 
     # 题材列：只显示共振题材
     signal_df["题材"] = signal_df["代码"].map(stock_theme_map).fillna("")
 
-    # 命中策略数量，用于排序
-    signal_df["命中策略数"] = signal_df["命中策略"].astype(str).apply(
-        lambda x: len([i for i in x.split("、") if i.strip()])
-    )
+    # 如果 strategy.py 已经返回了这些字段，就不要重复拆分
+    required_strategy_cols = [
+        "信号类型",
+        "突破反转策略",
+        "主升策略",
+        "突破反转策略数",
+        "主升策略数",
+        "命中策略数",
+    ]
+
+    has_strategy_cols = all(col in signal_df.columns for col in required_strategy_cols)
+
+    if not has_strategy_cols:
+        strategy_info_df = signal_df["命中策略"].apply(split_strategy_text).apply(pd.Series)
+        signal_df = pd.concat([signal_df, strategy_info_df], axis=1)
+
+    # 防止重复列名导致 pandas 赋值报错
+    signal_df = signal_df.loc[:, ~signal_df.columns.duplicated()].copy()
 
     # 所有数字列统一保留 2 位小数
     number_cols = signal_df.select_dtypes(include=["number"]).columns
-    signal_df[number_cols] = signal_df[number_cols].round(2)
+    for col in number_cols:
+        signal_df[col] = signal_df[col].round(2)
 
     # 排序：
     # 第一优先级：命中策略数，从大到小
@@ -449,12 +439,16 @@ def prepare_signal_export_df(signal_df: pd.DataFrame, stock_theme_map: dict) -> 
     export_cols = [
         "代码",
         "名称",
-        "题材",
+        # "题材",
         "K线日期",
+        "信号类型",
+        "突破反转策略",
+        "主升策略",
         "最新价",
         "涨跌幅",
         "行业",
-        "命中策略",
+        # "命中策略",
+        "命中策略数",
         "总市值_亿元",
         "量比",
         "15日涨停",
@@ -470,21 +464,58 @@ def prepare_signal_export_df(signal_df: pd.DataFrame, stock_theme_map: dict) -> 
 
     return export_signal_df
 
+def split_export_sections(export_signal_df: pd.DataFrame):
+    """
+    将最终结果拆成：
+    1. 突破反转：只要命中突破反转就显示
+    2. 主升信号：只显示纯主升，不包含同时命中突破反转的股票
+    """
+
+    if export_signal_df is None or export_signal_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    # 第一部分：所有命中突破反转的股票
+    breakthrough_df = export_signal_df[
+        export_signal_df["信号类型"].astype(str).str.contains("突破反转", na=False)
+    ].copy()
+
+    # 第二部分：只保留“纯主升”
+    # 即：信号类型包含“主升”，但不包含“突破反转”
+    main_promotion_df = export_signal_df[
+        (
+            export_signal_df["信号类型"].astype(str).str.contains("主升", na=False)
+        ) &
+        (
+            ~export_signal_df["信号类型"].astype(str).str.contains("突破反转", na=False)
+        )
+    ].copy()
+
+    return breakthrough_df, main_promotion_df
+
+
+# =========================
+# 主程序
+# =========================
+
 def main():
     disable_proxy()
 
     selected_df = load_or_create_base_pool()
 
-    if not RUN_SIGNAL_SCAN:
-        print("已关闭第二步主升信号扫描。")
+    if selected_df is None or selected_df.empty:
+        print("基础股票池为空，程序结束。")
         return
 
-    print("\n开始执行第二步：主升信号策略扫描...")
+    if not RUN_SIGNAL_SCAN:
+        print("已关闭第二步信号扫描。")
+        return
+
+    print("\n开始执行第二步：信号策略扫描...")
 
     signal_df = scan_main_rising_stocks(selected_df)
 
     if signal_df is None or signal_df.empty:
-        print("今日没有股票命中主升信号。")
+        print("今日没有股票命中信号。")
         return
 
     signal_df["代码"] = signal_df["代码"].astype(str).str.zfill(6)
@@ -510,15 +541,31 @@ def main():
 
     export_signal_df = prepare_signal_export_df(signal_df, stock_theme_map)
 
+    breakthrough_df, main_promotion_df = split_export_sections(export_signal_df)
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     signal_output_file = f"output/a_stock_signal_selected_{timestamp}.xlsx"
 
     with pd.ExcelWriter(signal_output_file, engine="openpyxl") as writer:
         export_signal_df.to_excel(
             writer,
-            sheet_name="命中股票",
+            sheet_name="全部信号",
             index=False
         )
+
+        if not breakthrough_df.empty:
+            breakthrough_df.to_excel(
+                writer,
+                sheet_name="突破反转",
+                index=False
+            )
+
+        if not main_promotion_df.empty:
+            main_promotion_df.to_excel(
+                writer,
+                sheet_name="主升信号",
+                index=False
+            )
 
         if resonance_summary_df is not None and not resonance_summary_df.empty:
             resonance_summary_df.to_excel(
@@ -538,11 +585,22 @@ def main():
 
     print_concept_resonance(resonance_summary_df)
 
-    print(f"主升信号股票数量：{len(export_signal_df)}")
-    print(f"主升信号结果已导出：{signal_output_file}")
+    print(f"全部信号股票数量：{len(export_signal_df)}")
+    print(f"突破反转股票数量：{len(breakthrough_df)}")
+    print(f"主升信号股票数量：{len(main_promotion_df)}")
+    print(f"信号结果已导出：{signal_output_file}")
+
+    print("\n突破反转股票预览：")
+    if breakthrough_df.empty:
+        print("今日没有突破反转类信号。")
+    else:
+        print_stock_table(breakthrough_df, max_rows=50)
 
     print("\n主升信号股票预览：")
-    print_stock_table(export_signal_df, max_rows=50)
+    if main_promotion_df.empty:
+        print("今日没有主升类信号。")
+    else:
+        print_stock_table(main_promotion_df, max_rows=50)
 
 
 if __name__ == "__main__":

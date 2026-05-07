@@ -297,8 +297,39 @@ def check_strategy_2(row) -> bool:
         and row["成交量"] > row["过去20日平均成交量"] * 2
     )
 
+def check_strategy_1_main_promotion(row) -> bool:
+    """
+    策略1：
+    股价创60天新高，伴随放量
+    今日收盘价 > max(过去60天，不含今日)
+    今日成交量 > avg(过去20天 volume) * 1.5
+    """
 
-def check_strategy_3(row) -> bool:
+    return (
+        row["收盘"] > row["过去60日最高收盘"]
+        and row["成交量"] > row["过去20日平均成交量"] * 1.5
+    )
+
+
+def check_strategy_2_main_promotion(row) -> bool:
+    """
+    策略2：
+    长期低位 + 突然放量大涨
+    当前价格距60天最低点 < 30%
+    今日涨幅 > 5%
+    今日成交量 > avg(过去20天 volume) * 2
+    """
+
+    distance_from_low = row["收盘"] / row["过去60日最低收盘"] - 1
+
+    return (
+        distance_from_low < 0.30
+        and row["涨跌幅"] > 5
+        and row["成交量"] > row["过去20日平均成交量"] * 2
+    )
+
+
+def check_strategy_3_main_promotion(row) -> bool:
     """
     策略3：缩量回调启动
     短期回调结束，重新启动
@@ -312,7 +343,7 @@ def check_strategy_3(row) -> bool:
     )
 
 
-def check_strategy_4(row) -> bool:
+def check_strategy_4_main_promotion(row) -> bool:
     """
     策略4：均线多头排列
     """
@@ -366,28 +397,54 @@ def check_main_rising_signal(code: str):
         if latest[need_cols].isna().any():
             return False, "", None
 
-        hit_strategies = []
+        breakthrough_strategies = []
+        main_promotion_strategies = []
 
+        # 突破 / 反转类
         if check_strategy_1(latest):
-            hit_strategies.append("箱体突破")
+            breakthrough_strategies.append("箱体突破")
 
         if check_strategy_2(latest):
-            hit_strategies.append("底部放量反转")
+            breakthrough_strategies.append("底部放量反转")
 
-        # if check_strategy_3(latest):
-        #     hit_strategies.append("缩量回调启动")
+        # 主升类
+        if check_strategy_1_main_promotion(latest):
+            main_promotion_strategies.append("主升-箱体突破")
 
-        # if check_strategy_4(latest):
-        #     hit_strategies.append("均线多头排列")
+        if check_strategy_2_main_promotion(latest):
+            main_promotion_strategies.append("主升-底部放量反转")
+
+        if check_strategy_3_main_promotion(latest):
+            main_promotion_strategies.append("主升-缩量回调启动")
+
+        if check_strategy_4_main_promotion(latest):
+            main_promotion_strategies.append("主升-均线多头排列")
+
+        hit_strategies = breakthrough_strategies + main_promotion_strategies
 
         if len(hit_strategies) == 0:
             return False, "", None
+
+        signal_types = []
+
+        if len(breakthrough_strategies) > 0:
+            signal_types.append("突破反转")
+
+        if len(main_promotion_strategies) > 0:
+            signal_types.append("主升")
 
         # 命中主升策略后，再执行统一二次过滤
         if not check_secondary_filters(latest):
             return False, "", None
 
         info = {
+            "信号类型": "、".join(signal_types),
+            "突破反转策略": "、".join(breakthrough_strategies),
+            "主升策略": "、".join(main_promotion_strategies),
+            "突破反转策略数": len(breakthrough_strategies),
+            "主升策略数": len(main_promotion_strategies),
+            "命中策略数": len(hit_strategies),
+
             "K线日期": latest["日期"],
             "收盘价": latest["收盘"],
             "今日涨跌幅": latest["涨跌幅"],
