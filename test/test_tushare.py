@@ -1,9 +1,9 @@
 # test_tushare.py
 # 用于测试 Tushare Token + 代理地址是否可以正常获取 A股基础数据
-# python -m pip install tushare pandas -i https://pypi.tuna.tsinghua.edu.cn/simple
+# 并获取前1行股票过去1天的分钟数据
 import tushare as ts
 import pandas as pd
-
+from datetime import datetime, timedelta
 
 TOKEN = "W5yA7cE9gI1kM3oQ5sU7wY9aC1eG3iK5mO7qS9uW1yA3cE5gI7kM9oQ1sU3wY5aC7eG9iK1mO3qS"
 PROXY_URL = "http://47.92.128.69:35721/dataapi"
@@ -45,7 +45,46 @@ def test_tushare():
         df.to_csv(output_file, index=False, encoding="utf-8-sig")
 
         print()
-        print(f"测试数据已保存到：{output_file}")
+        print(f"股票基础数据已保存到：{output_file}")
+
+        # -----------------------
+        # 获取前1行股票过去1天的分钟级数据
+        # -----------------------
+        first_stock = df.iloc[0]['ts_code']
+        print(f"\n正在获取股票 {first_stock} 过去1天的分钟数据...")
+
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=1)
+        start_str = start_date.strftime('%Y%m%d')
+        end_str = end_date.strftime('%Y%m%d')
+
+        freq_list = ['1min', '5min', '15min']
+        all_data = {}
+
+        for freq in freq_list:
+            try:
+                df_min = pro.stk_mins(
+                    ts_code=first_stock,
+                    start_date=start_str,
+                    end_date=end_str,
+                    freq=freq,
+                    adj='qfq'  # 前复权
+                )
+                all_data[freq] = df_min
+                print(f"  {freq} 数据条数: {len(df_min)}")
+            except Exception as e:
+                print(f"  获取 {freq} 数据失败: {e}")
+                all_data[freq] = pd.DataFrame()
+
+        # 保存到 Excel
+        output_min_file = f"tushare_min_{first_stock}.xlsx"
+        with pd.ExcelWriter(output_min_file) as writer:
+            for freq, df_min in all_data.items():
+                if df_min is not None and not df_min.empty:
+                    sheet_name = f"{first_stock}_{freq}"[:31]  # sheet名最长31字符
+                    df_min.to_excel(writer, sheet_name=sheet_name, index=False)
+
+        print(f"分钟数据已保存到：{output_min_file}")
 
     except Exception as e:
         print("测试失败，错误信息如下：")

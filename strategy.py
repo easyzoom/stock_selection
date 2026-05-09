@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 import baostock as bs
 
+from strategies import evaluate_daily_strategies
+
 
 HIST_CACHE_DIR = "cache/hist"
 SIGNAL_OUTPUT_FILE = "output/a_stock_signal_selected.xlsx"
@@ -357,9 +359,106 @@ def check_strategy_4_main_promotion(row) -> bool:
     )
 
 
+def get_required_strategy_columns() -> list[str]:
+    """策略计算前必须存在且不能为 NaN 的指标列。"""
+
+    return [
+        "SMA5",
+        "SMA10",
+        "SMA20",
+        "SMA60",
+        "过去60日最高价",
+        "过去60日最高收盘",
+        "过去60日最低收盘",
+        "过去40日最低价",
+        "过去20日实体振幅",
+        "过去20日平均成交量",
+        "过去20日日均成交额",
+        "近15日涨停次数",
+        "SMA60_5日前",
+    ]
+
+
+def build_signal_info(latest: pd.Series, breakthrough_strategies: list[str], main_promotion_strategies: list[str]) -> dict:
+    """把策略命中结果整理成主程序、实时扫描、回测都能复用的字段。"""
+
+    hit_strategies = breakthrough_strategies + main_promotion_strategies
+
+    signal_types = []
+    if breakthrough_strategies:
+        signal_types.append("突破反转")
+    if main_promotion_strategies:
+        signal_types.append("主升")
+
+    return {
+        "信号类型": "、".join(signal_types),
+        "突破反转策略": "、".join(breakthrough_strategies),
+        "主升策略": "、".join(main_promotion_strategies),
+        "突破反转策略数": len(breakthrough_strategies),
+        "主升策略数": len(main_promotion_strategies),
+        "命中策略数": len(hit_strategies),
+
+        "K线日期": latest["日期"],
+        "收盘价": latest["收盘"],
+        "最新价": latest["收盘"],
+        "今日涨跌幅": latest["涨跌幅"],
+        "涨跌幅": latest["涨跌幅"],
+        "今日成交量": latest["成交量"],
+        "过去20日平均成交量": latest["过去20日平均成交量"],
+        "量比": latest["成交量"] / latest["过去20日平均成交量"],
+
+        "过去20日日均成交额": latest["过去20日日均成交额"],
+        "过去20日日均成交额_万元": latest["过去20日日均成交额"] / 10000,
+        "15日涨停": int(latest["近15日涨停次数"]),
+
+        "过去60日最高价": latest["过去60日最高价"],
+        "过去60日最高收盘": latest["过去60日最高收盘"],
+        "过去60日最低收盘": latest["过去60日最低收盘"],
+        "过去40日最低价": latest["过去40日最低价"],
+        "距40日低点涨幅": latest["收盘"] / latest["过去40日最低价"] - 1,
+        "过去20日实体振幅": latest["过去20日实体振幅"],
+        "距60日低点涨幅": latest["收盘"] / latest["过去60日最低收盘"] - 1,
+        "SMA5": latest["SMA5"],
+        "SMA10": latest["SMA10"],
+        "SMA20": latest["SMA20"],
+        "SMA60": latest["SMA60"],
+    }
+
+
+def evaluate_latest_signal(latest: pd.Series):
+    """
+    对已经计算好指标的最新K线执行全部已注册日线策略。
+
+    返回：是否命中、命中策略文本、指标信息。
+    这是日线扫描、盘中实时扫描、后续回测共用的核心入口。
+    """
+
+    need_cols = get_required_strategy_columns()
+
+    if latest[need_cols].isna().any():
+        return False, "", None
+
+    signals = evaluate_daily_strategies(latest)
+
+    if not signals:
+        return False, "", None
+
+    # 命中策略后，再执行统一二次过滤。
+    if not check_secondary_filters(latest):
+        return False, "", None
+
+    breakthrough_strategies = [signal.name for signal in signals if signal.category == "突破反转"]
+    main_promotion_strategies = [signal.name for signal in signals if signal.category == "主升"]
+    hit_strategies = breakthrough_strategies + main_promotion_strategies
+
+    info = build_signal_info(latest, breakthrough_strategies, main_promotion_strategies)
+
+    return True, "、".join(hit_strategies), info
+
+
 def check_main_rising_signal(code: str):
     """
-    检查某只股票是否命中主升策略。
+    检查某只股票是否命中已注册日线策略。
     返回：是否命中、命中的策略、最新行情指标。
     """
 
@@ -371,104 +470,12 @@ def check_main_rising_signal(code: str):
 
         hist_df = prepare_hist_data(hist_df)
 
-        # 数据不足65天，无法计算完整策略
+        # 数据不足65天，无法计算完整策略。
         if len(hist_df) < 65:
             return False, "", None
 
         latest = hist_df.iloc[-1]
-
-        need_cols = [
-            "SMA5",
-            "SMA10",
-            "SMA20",
-            "SMA60",
-            "过去60日最高价",
-            "过去60日最高收盘",
-            "过去60日最低收盘",
-            "过去40日最低价",
-            "过去20日实体振幅",
-            "过去20日平均成交量",
-            "过去20日日均成交额",
-            "近15日涨停次数",
-            "SMA60_5日前",
-        ]
-
-        if latest[need_cols].isna().any():
-            return False, "", None
-
-        breakthrough_strategies = []
-        main_promotion_strategies = []
-
-        # 突破 / 反转类
-        if check_strategy_1(latest):
-            breakthrough_strategies.append("箱体突破")
-
-        if check_strategy_2(latest):
-            breakthrough_strategies.append("底部放量反转")
-
-        # 主升类
-        if check_strategy_1_main_promotion(latest):
-            main_promotion_strategies.append("主升-箱体突破")
-
-        if check_strategy_2_main_promotion(latest):
-            main_promotion_strategies.append("主升-底部放量反转")
-
-        if check_strategy_3_main_promotion(latest):
-            main_promotion_strategies.append("主升-缩量回调启动")
-
-        if check_strategy_4_main_promotion(latest):
-            main_promotion_strategies.append("主升-均线多头排列")
-
-        hit_strategies = breakthrough_strategies + main_promotion_strategies
-
-        if len(hit_strategies) == 0:
-            return False, "", None
-
-        signal_types = []
-
-        if len(breakthrough_strategies) > 0:
-            signal_types.append("突破反转")
-
-        if len(main_promotion_strategies) > 0:
-            signal_types.append("主升")
-
-        # 命中策略后，再执行统一二次过滤
-        if not check_secondary_filters(latest):
-            return False, "", None
-
-        info = {
-            "信号类型": "、".join(signal_types),
-            "突破反转策略": "、".join(breakthrough_strategies),
-            "主升策略": "、".join(main_promotion_strategies),
-            "突破反转策略数": len(breakthrough_strategies),
-            "主升策略数": len(main_promotion_strategies),
-            "命中策略数": len(hit_strategies),
-
-            "K线日期": latest["日期"],
-            "收盘价": latest["收盘"],
-            "今日涨跌幅": latest["涨跌幅"],
-            "今日成交量": latest["成交量"],
-            "过去20日平均成交量": latest["过去20日平均成交量"],
-            "量比": latest["成交量"] / latest["过去20日平均成交量"],
-
-            "过去20日日均成交额": latest["过去20日日均成交额"],
-            "过去20日日均成交额_万元": latest["过去20日日均成交额"] / 10000,
-            "15日涨停": int(latest["近15日涨停次数"]),
-
-            "过去60日最高价": latest["过去60日最高价"],
-            "过去60日最高收盘": latest["过去60日最高收盘"],
-            "过去60日最低收盘": latest["过去60日最低收盘"],
-            "过去40日最低价": latest["过去40日最低价"],
-            "距40日低点涨幅": latest["收盘"] / latest["过去40日最低价"] - 1,
-            "过去20日实体振幅": latest["过去20日实体振幅"],
-            "距60日低点涨幅": latest["收盘"] / latest["过去60日最低收盘"] - 1,
-            "SMA5": latest["SMA5"],
-            "SMA10": latest["SMA10"],
-            "SMA20": latest["SMA20"],
-            "SMA60": latest["SMA60"],
-        }
-
-        return True, "、".join(hit_strategies), info
+        return evaluate_latest_signal(latest)
 
     except Exception as e:
         print(f"{code} 策略计算失败：{e}")

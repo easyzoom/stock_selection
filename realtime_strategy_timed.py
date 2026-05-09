@@ -27,7 +27,7 @@ from strategy import (
     evaluate_latest_signal,
 )
 
-from minute_strategy import scan_minute_buy_points, calibrate_minute_cache_after_market
+from minute_strategy import scan_minute_buy_points
 
 
 BASE_POOL_FILE = "output/a_stock_selected.xlsx"
@@ -35,7 +35,6 @@ OUTPUT_DIR = "output"
 REALTIME_INCREMENTAL_DIR = "output/realtime_incremental"
 DEFAULT_BATCH_SIZE = 50
 DEFAULT_INTERVAL_SECONDS = 60
-DEFAULT_MINUTE_DAYS = 10
 
 
 def print_step_elapsed(step_name: str, start_time: float):
@@ -614,9 +613,6 @@ def scan_realtime_once(
     max_workers: int = 4,
     enable_minute: bool = True,
     minute_max_stocks: int = 0,
-    minute_days: int = DEFAULT_MINUTE_DAYS,
-    enable_1m_buy: bool = False,
-    force_update_minute: bool = False,
 ) -> pd.DataFrame:
     """
     执行一轮实时扫描。
@@ -797,10 +793,6 @@ def scan_realtime_once(
         minute_df = scan_minute_buy_points(
             export_df,
             max_stocks=minute_max_stocks,
-            minute_days=minute_days,
-            max_workers=max_workers,
-            enable_1m_buy=enable_1m_buy,
-            force_update_minute=force_update_minute,
         )
         print_step_elapsed("9. 分钟级B点扫描", step_start_time)
     else:
@@ -887,49 +879,13 @@ def main():
     )
 
     parser.add_argument(
-        "--minute-days",
-        type=int,
-        default=DEFAULT_MINUTE_DAYS,
-        help="分钟级B点确认使用最近N天分钟数据，默认10天。",
-    )
-
-    parser.add_argument(
-        "--enable-1m-buy",
-        action="store_true",
-        help="开启1分钟精确买点。默认关闭，只使用30分钟趋势 + 5分钟结构/缠论B点确认。",
-    )
-
-    parser.add_argument(
-        "--force-update-minute",
-        action="store_true",
-        help="强制请求 Tushare stk_mins 更新分钟K线，忽略当前是否交易时间。用于测试5分钟/30分钟B点扫描速度。",
-    )
-
-    parser.add_argument(
-        "--after-market-calibrate",
-        action="store_true",
-        help="盘后分钟K线校准：使用 stk_mins 重新拉取并覆盖 cache/minute 下的分钟缓存。默认校准5m/30m；配合 --enable-1m-buy 会同时校准1m。",
-    )
-
-    parser.add_argument(
         "--max-workers",
         type=int,
         default=4,
-        help="实时行情获取和分钟级B点确认共用的线程数（ThreadPoolExecutor max_workers）",
+        help="实时行情获取线程数（ThreadPoolExecutor max_workers）",
     )
 
     args = parser.parse_args()
-
-    if args.after_market_calibrate:
-        pool_df = load_base_pool(BASE_POOL_FILE)
-        calibrate_minute_cache_after_market(
-            pool_df,
-            max_stocks=args.max_stocks,
-            minute_days=args.minute_days,
-            max_workers=args.max_workers,
-            include_1m=args.enable_1m_buy,
-        )
-        return
 
     if args.loop:
         while True:
@@ -947,9 +903,6 @@ def main():
                     max_workers=args.max_workers,
                     enable_minute=not args.disable_minute,
                     minute_max_stocks=args.minute_max_stocks,
-                    minute_days=args.minute_days,
-                    enable_1m_buy=args.enable_1m_buy,
-                    force_update_minute=args.force_update_minute,
                 )
             except KeyboardInterrupt:
                 print("用户中断，实时扫描结束。")
@@ -979,9 +932,6 @@ def main():
             max_workers=args.max_workers,
             enable_minute=not args.disable_minute,
             minute_max_stocks=args.minute_max_stocks,
-            minute_days=args.minute_days,
-            enable_1m_buy=args.enable_1m_buy,
-            force_update_minute=args.force_update_minute,
         )
 
 

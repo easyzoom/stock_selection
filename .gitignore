@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+
+# virtual env
+.venv/
+venv/
+.env
+
+# runtime outputs and caches
+output/
+cache/
+
+# Excel / WPS temp files
+~$*.xlsx
+~$*.xls
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
