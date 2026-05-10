@@ -86,6 +86,50 @@ def print_strategy_descriptions():
 # 终端中文对齐显示
 # =========================
 
+def display_width(text) -> int:
+    """
+    返回字符串在终端中的显示宽度。
+    wcswidth 遇到少数不可见字符可能返回 -1，这里做兜底处理。
+    """
+
+    text = "" if pd.isna(text) else str(text)
+    width = wcswidth(text)
+    if width < 0:
+        width = len(text)
+    return width
+
+
+def truncate_display_text(text, max_width: int) -> str:
+    """
+    按终端显示宽度截断字符串，避免日线预览表因为字段太长导致换行错位。
+    只影响终端预览，不影响 Excel 导出数据。
+    """
+
+    text = "" if pd.isna(text) else str(text)
+
+    if max_width <= 0:
+        return ""
+
+    if display_width(text) <= max_width:
+        return text
+
+    ellipsis = "…"
+    ellipsis_width = display_width(ellipsis)
+    keep_width = max(1, max_width - ellipsis_width)
+
+    result = ""
+    current_width = 0
+
+    for ch in text:
+        ch_width = display_width(ch)
+        if current_width + ch_width > keep_width:
+            break
+        result += ch
+        current_width += ch_width
+
+    return result + ellipsis
+
+
 def align_text(text, width, align="left"):
     """
     按中文显示宽度对齐字符串。
@@ -93,7 +137,7 @@ def align_text(text, width, align="left"):
     """
 
     text = "" if pd.isna(text) else str(text)
-    text_width = wcswidth(text)
+    text_width = display_width(text)
 
     padding = width - text_width
 
@@ -111,10 +155,26 @@ def align_text(text, width, align="left"):
     return text + " " * padding
 
 
+def format_date_for_table(value) -> str:
+    """
+    日线预览表日期格式化。
+    把 2026-05-08 00:00:00 这类值压缩为 2026-05-08，避免表格列宽被撑大。
+    """
+
+    if pd.isna(value):
+        return ""
+
+    dt = pd.to_datetime(value, errors="coerce")
+    if pd.isna(dt):
+        return str(value)
+
+    return dt.strftime("%Y-%m-%d")
+
+
 def print_stock_table(df: pd.DataFrame, max_rows: int = 50):
     """
     终端中以纯文本方式展示股票结果。
-    解决中文列名、中文股票名、行业名导致的错位问题。
+    解决中文列名、中文股票名、行业名、日期字段和长策略字段导致的错位问题。
     """
 
     if df is None or df.empty:
@@ -139,13 +199,17 @@ def print_stock_table(df: pd.DataFrame, max_rows: int = 50):
     ]
 
     show_cols = [col for col in show_cols if col in df.columns]
-
     show_df = df[show_cols].copy().head(max_rows)
 
     if "代码" in show_df.columns:
         show_df["代码"] = show_df["代码"].astype(str).str.zfill(6)
 
-    # 数字格式化
+    # 日期格式化：避免输出 2026-05-08 00:00:00 导致 K线日期 列被撑开或错位。
+    for col in ["K线日期", "行情日期", "日期"]:
+        if col in show_df.columns:
+            show_df[col] = show_df[col].map(format_date_for_table)
+
+    # 数字格式化。
     for col in ["最新价", "涨跌幅", "市值_亿元", "量比"]:
         if col in show_df.columns:
             show_df[col] = pd.to_numeric(show_df[col], errors="coerce").map(
@@ -158,11 +222,25 @@ def print_stock_table(df: pd.DataFrame, max_rows: int = 50):
                 lambda x: "" if pd.isna(x) else str(int(x))
             )
 
+    # 终端预览字段过长时做显示截断，避免整行超出窗口后自动换行造成“错位”。
+    # 注意：这里只改 show_df，不影响 Excel 导出的完整策略字段。
+    max_display_widths = {
+        "题材": 24,
+        "信号类型": 16,
+        "行业": 12,
+        "突破反转策略": 22,
+        "主升策略": 34,
+    }
+
+    for col, max_width in max_display_widths.items():
+        if col in show_df.columns:
+            show_df[col] = show_df[col].map(lambda x: truncate_display_text(x, max_width))
+
     min_widths = {
         "代码": 8,
         "名称": 10,
         "题材": 20,
-        "K线日期": 12,
+        "K线日期": 10,
         "信号类型": 14,
         "最新价": 8,
         "涨跌幅": 8,
@@ -178,10 +256,10 @@ def print_stock_table(df: pd.DataFrame, max_rows: int = 50):
     col_widths = {}
 
     for col in show_cols:
-        max_width = wcswidth(col)
+        max_width = display_width(col)
 
         for value in show_df[col].astype(str).tolist():
-            max_width = max(max_width, wcswidth(value))
+            max_width = max(max_width, display_width(value))
 
         col_widths[col] = max(max_width, min_widths.get(col, 8))
 
@@ -217,7 +295,6 @@ def print_stock_table(df: pd.DataFrame, max_rows: int = 50):
             row_parts.append(align_text(row[col], col_widths[col], align))
 
         print(" | ".join(row_parts))
-
 
 def print_concept_resonance(resonance_summary_df: pd.DataFrame):
     """
