@@ -914,7 +914,7 @@ def main():
     parser.add_argument(
         "--max-workers",
         type=int,
-        default=4,
+        default=6,
         help="实时行情获取和分钟级B点确认共用的线程数（ThreadPoolExecutor max_workers）",
     )
 
